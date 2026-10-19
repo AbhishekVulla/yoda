@@ -1,22 +1,30 @@
 # Yoda
 
-A voice-first care necklace for elderly people living alone. She talks to it. It talks to her caregiver.
+A care necklace seniors can talk to. Yoda supports daily check-ins and care requests, with a dashboard for their caregiver.
 
 **[Demo video](https://www.youtube.com/watch?v=fLG9y0mhrLA)** · Top 5 Finalist, Dell InnovateDash 2026 (Care Corner)
 
-> The wake word is "Jarvis". Espressif only ships a handful of pre-trained wake words and "Yoda" isn't one of them, so the repo kept the original name.
+<p align="center">
+  <img src="docs/images/pendant-prototypes.jpg" alt="The early white enclosure beside a smaller black pendant on a lanyard" width="440" />
+  <br />
+  <em>The early enclosure beside the smaller pendant prototype.</em>
+</p>
+
+The wake word is "Jarvis", using Espressif's pre-trained wake-word model. The project name is still Yoda.
 
 ## Why
 
-Singapore's community care services do exist. They are just scattered across portals, hotlines and 20-question intake forms, and the people who need them most are the least likely to get through an app to reach them. Someone who can talk to a necklace does not have to navigate any of that, and her caregiver still makes every decision.
+Care Corner's challenge was about seniors struggling to reach services that already existed. Information was scattered across providers, and finding the right help meant navigating websites, enquiries and forms.
+
+The interRAI assessment supplied with the challenge was five dense pages of health, daily-living and caregiver details. Yoda uses the senior's saved record to ask relevant questions in a spoken check-in, then brings their answers into the caregiver's dashboard. A senior can describe what they need without navigating another app, and the caregiver has the context to follow up.
 
 ## What it does
 
-**Daily check-in.** The necklace starts a short recovery check-in on its own, tailored to what's on her record. Did you take your heart medicine. How's the cut on your chest. Any tightness or trouble breathing. Her answers become a health incident, and the dashboard turns that into an SBAR clinical handover a caregiver or a paramedic can actually act on.
+**Daily check-in.** The voice agent asks recovery questions based on the senior's record, such as whether they took their medication or have trouble breathing. It saves the answers as a health incident. The dashboard generates an SBAR handover: situation, background, assessment and recommendation.
 
-**Welfare escalation.** If a caregiver can't reach her at the door or by phone, they ping the necklace from the dashboard. It beeps and asks her to respond. Only if she doesn't answer does the camera unlock, and only after the necklace has said out loud that it's turning on.
+**Welfare check.** A caregiver can ping the necklace from the dashboard and ask the senior to respond. The dashboard also provides a camera check. The necklace plays an announcement before sending camera frames through the relay.
 
-One rule underneath both: **the AI never acts alone.** Every action it wants to take becomes a request a human approves first.
+Activity requests wait for the caregiver's approval. The voice tools can save profile updates and health-check responses directly.
 
 ## Architecture
 
@@ -34,9 +42,9 @@ flowchart LR
 
 The cloud LLM is the only thing that calls the tools. The dashboard and the MCP server never talk to each other directly, they meet at the database.
 
-## The parts that were actually hard
+## Engineering decisions
 
-**The MCP server dials out.** A hosted LLM can't reach a tool server sitting on a laptop behind NAT. So `mcp_pipe.py` opens the WebSocket in the other direction, to the cloud's MCP endpoint, and pipes it to a local stdio FastMCP process. No port forwarding, no public IP, no tunnel service.
+**The MCP server connects out through a WebSocket.** The cloud needs to call tools on a server that may be behind NAT. [`mcp_pipe.py`](mcp_pipe.py) opens an outbound connection to the cloud's MCP endpoint and pipes messages to a local stdio FastMCP process, without opening an inbound port.
 
 **The emergency watchdog is a SQL expression, not a worker.** If she starts a health check and then goes quiet, that silence has to become an alert. Instead of a cron job or a background queue, the escalation is derived at query time:
 
@@ -45,49 +53,50 @@ CASE WHEN status = 'in_progress' AND now() - started_at > make_interval(secs => 
      THEN 'emergency' ...
 ```
 
-The dashboard already polls every 3s, so the escalation just appears. Nothing to schedule, nothing to keep alive, nothing to crash silently.
+The dashboard polls every 3 seconds and reads this derived status. A health check left `in_progress` for more than 25 seconds appears as an emergency on the next refresh, without a separate scheduled worker.
 
-**Seeing her from anywhere, with zero setup.** The first version needed the caregiver on the same Wi-Fi to reach the necklace's LAN server. Useless in practice. Now the necklace polls the dashboard for commands and pushes JPEG frames up over HTTPS, so everything is outbound. Works on a mobile hotspot, no router config.
+**The camera relay works across networks.** The first version required the caregiver and necklace to share Wi-Fi. The necklace now polls the deployed dashboard for commands and uploads JPEG frames over HTTPS. Both connections are outbound, so it also works over a mobile hotspot without port forwarding.
 
-**That relay was quietly killing the wake word.** After adding the relay, "Jarvis" stopped triggering. The cause was a fresh TLS handshake every 2 seconds hogging the CPU and starving the on-chip wake-word detector, which needs a steady mic feed. Throttling the idle poll to 15s brought it back. The camera stream still starves it while running, which is fine, that path is caregiver-initiated.
+**Polling competed with wake-word detection.** Opening a fresh TLS connection every 2 seconds used enough CPU to interrupt the on-device wake-word detector. Increasing the idle interval to 15 seconds restored it. Camera streaming still competes for that CPU while the caregiver is viewing it.
 
-**Privacy is enforced on the device, not the dashboard.** The camera can't be turned on cold. It only unlocks after a ping goes unanswered, and the necklace speaks an announcement before the lens opens.
+**The camera announces itself.** The firmware plays the announcement before uploading relay frames, with a 2.5-second delay before capture. The dashboard handles the caregiver's ping and camera controls.
 
-## What's real and what's mocked
+## Hardware
 
-Real: the voice loop, the tool calls, the database, the triage and escalation, the SBAR report, the camera relay, the firmware.
+The pendant uses a Seeed XIAO ESP32-S3 Sense with its camera and microphone, a MAX98357A I2S amplifier, a speaker and a 3.7 V LiPo battery.
 
-Mocked: the service providers. No Singapore community-care provider (Care Corner, AIC/ICCP, Meals-on-Wheels) exposes a public booking API, it's all phone, email and referral forms. The tools return realistic results and `services.py` keeps a one-function seam to drop in a real `httpx` call the day an API exists.
+<p align="center">
+  <img src="docs/images/breadboard-prototype.jpg" alt="Breadboard prototype showing the camera board, amplifier and round speaker" width="400" />
+  <br />
+  <em>The camera board, amplifier and speaker before assembly into the pendant.</em>
+</p>
 
-Also worth saying plainly: the firmware is a custom board overlay on [`78/xiaozhi-esp32`](https://github.com/78/xiaozhi-esp32) (MIT), not a from-scratch stack. The board definition, welfare HTTP API, cloud relay and camera path are mine.
+Use the [pin table and speaker troubleshooting guide](firmware/README.md#hardware) when wiring it. The XIAO's D0, D1 and D2 pads are GPIO 1, 2 and 3: the amplifier's LRC, BCLK and DIN connections respectively. The photo shows the prototype assembly, not a pin-by-pin wiring diagram.
 
-## Repo layout
+[Firmware build and flash instructions](firmware/README.md#build-from-scratch) · [Enclosure and printable files](cad/README.md)
 
-```
-yoda-mcp/
-├── yoda_iccp.py          # the 8 tools the cloud LLM can call
-├── mcp_pipe.py           # dials OUT to the cloud MCP endpoint
-├── health_db.py          # triage + the no-response escalation
-├── kb_store.py           # senior profile load/merge (Neon or local file)
-├── events.py             # activity matching
-├── services.py           # mock provider adapter (the real-API seam)
-├── SYSTEM_PROMPT.md      # the agent prompt, pasted into the xiaozhi console
-├── test_*.py             # 14 tests
-│
-├── firmware/yoda-pendant/    # board overlay: config, welfare HTTP API, cloud relay
-├── dashboard/                # Next.js caregiver dashboard
-│   ├── app/                  # care view, welfare panel, SBAR report page
-│   └── lib/                  # Neon queries + OpenAI report synthesis
-└── cad/pendant_case.py       # parametric enclosure (build123d) -> printable STL
-```
+## Service integrations
+
+The voice loop, MCP tools, database, health-check flow, SBAR report and camera relay are implemented. Community-care bookings are mocked in [`services.py`](services.py): this project does not connect to the providers' booking systems.
+
+The firmware builds on [`78/xiaozhi-esp32`](https://github.com/78/xiaozhi-esp32) (MIT). The additions here are the Yoda board definition, welfare HTTP API, cloud relay and camera path.
+
+## Where to start in the code
+
+- [MCP tools](yoda_iccp.py) and [WebSocket connection](mcp_pipe.py). The tool implementations use [health incidents](health_db.py), [senior profiles](kb_store.py), [activity matching](events.py) and [provider adapters](services.py).
+- [Caregiver dashboard](dashboard/). `app/` contains the care view, welfare controls and SBAR page. `lib/` contains database queries and report generation.
+- [Pendant firmware](firmware/). Board configuration, welfare HTTP API and camera relay.
+- [Enclosure](cad/). Parametric case design and printable files.
+
+The tool reference below lists all eight tools. [SYSTEM_PROMPT.md](SYSTEM_PROMPT.md) configures how the cloud agent uses them. Test commands are in [Run it](#run-it).
 
 ## The tools
 
 | Tool | What it does |
 |------|--------------|
-| `get_senior_profile` | Recall who it's talking to. Called first, so it never re-asks what's on file. |
+| `get_senior_profile` | Load the senior's saved profile before asking questions. |
 | `begin_health_check` | Open an incident the moment she reports feeling unwell. Starts the silence timer. |
-| `complete_health_check` | File the triage with clinical red flags → `mild` / `serious` |
+| `complete_health_check` | Save the triage responses and classify the incident as `mild` or `serious`. |
 | `match_events` | Top 1-2 activities for her goals and area, excluding ones already requested |
 | `request_activity` | Create a **pending request** for the caregiver. Never books directly. |
 | `update_knowledge_base` | Save preferences learned in conversation |
@@ -125,3 +134,11 @@ pytest          # 14 tests: matching, KB merge, services, triage + escalation
 ## Security
 
 `MCP_ENDPOINT`, `DATABASE_URL` and `OPENAI_API_KEY` live in `.env` / `.env.local`, both gitignored and never committed. The device token in `firmware/yoda-pendant/config.h` is a placeholder in this repo. Rotate the MCP token from the console if it ever leaks.
+
+## At Dell InnovateDash
+
+<p align="center">
+  <img src="docs/images/dell-team.jpg" alt="The three-person team at Dell with the early pendant prototype" width="680" />
+  <br />
+  <em>The team with the early pendant at Dell.</em>
+</p>
