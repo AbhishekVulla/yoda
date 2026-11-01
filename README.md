@@ -4,11 +4,9 @@ A care necklace seniors can talk to. Yoda supports daily check-ins and care requ
 
 **[Demo video](https://www.youtube.com/watch?v=fLG9y0mhrLA)** · Top 5 Finalist, Dell InnovateDash 2026 (Care Corner)
 
-<p align="center">
-  <img src="docs/images/pendant-prototypes.jpg" alt="The early white enclosure beside a smaller black pendant on a lanyard" width="440" />
-  <br />
-  <em>The early enclosure beside the smaller pendant prototype.</em>
-</p>
+[![Yoda opening into its internal components](docs/images/yoda-teardown.gif)](https://abhishekvulla.com/explore/yoda/index.html)
+
+[Explore the hardware in 3D](https://abhishekvulla.com/explore/yoda/index.html): rotate the pendant, separate the components and follow the connections.
 
 The wake word is "Jarvis", using Espressif's pre-trained wake-word model. The project name is still Yoda.
 
@@ -42,6 +40,25 @@ flowchart LR
 
 The cloud LLM is the only thing that calls the tools. The dashboard and the MCP server never talk to each other directly, they meet at the database.
 
+## Hardware
+
+The pendant uses a Seeed XIAO ESP32-S3 Sense with its camera and microphone, a MAX98357A I2S amplifier, a speaker and a 3.7 V LiPo battery.
+
+![Yoda hardware connections](docs/images/yoda-wiring.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/pendant-prototypes.jpg" alt="The early white enclosure beside a smaller black pendant on a lanyard" width="100%" /></td>
+    <td width="50%"><img src="docs/images/breadboard-prototype.jpg" alt="Breadboard prototype showing the camera board, amplifier and round speaker" width="100%" /></td>
+  </tr>
+</table>
+
+<p align="center"><em>The pendant prototypes and the camera board, amplifier and speaker before assembly.</em></p>
+
+Use the [pin table and speaker troubleshooting guide](https://github.com/AbhishekVulla/yoda/blob/main/firmware/README.md#hardware) when wiring it.
+
+[Firmware build and flash instructions](firmware/README.md#build-from-scratch) · [Enclosure and printable files](cad/README.md)
+
 ## Engineering decisions
 
 **The MCP server connects out through a WebSocket.** The cloud needs to call tools on a server that may be behind NAT. [`mcp_pipe.py`](mcp_pipe.py) opens an outbound connection to the cloud's MCP endpoint and pipes messages to a local stdio FastMCP process, without opening an inbound port.
@@ -60,20 +77,6 @@ The dashboard polls every 3 seconds and reads this derived status. A health chec
 **Polling competed with wake-word detection.** Opening a fresh TLS connection every 2 seconds used enough CPU to interrupt the on-device wake-word detector. Increasing the idle interval to 15 seconds restored it. Camera streaming still competes for that CPU while the caregiver is viewing it.
 
 **The camera announces itself.** The firmware plays the announcement before uploading relay frames, with a 2.5-second delay before capture. The dashboard handles the caregiver's ping and camera controls.
-
-## Hardware
-
-The pendant uses a Seeed XIAO ESP32-S3 Sense with its camera and microphone, a MAX98357A I2S amplifier, a speaker and a 3.7 V LiPo battery.
-
-<p align="center">
-  <img src="docs/images/breadboard-prototype.jpg" alt="Breadboard prototype showing the camera board, amplifier and round speaker" width="400" />
-  <br />
-  <em>The camera board, amplifier and speaker before assembly into the pendant.</em>
-</p>
-
-Use the [pin table and speaker troubleshooting guide](firmware/README.md#hardware) when wiring it. The XIAO's D0, D1 and D2 pads are GPIO 1, 2 and 3: the amplifier's LRC, BCLK and DIN connections respectively. The photo shows the prototype assembly, not a pin-by-pin wiring diagram.
-
-[Firmware build and flash instructions](firmware/README.md#build-from-scratch) · [Enclosure and printable files](cad/README.md)
 
 ## Service integrations
 
